@@ -20,10 +20,10 @@ let scheduler;
 let workers = [];
 
 logger = {
-  failed : [],
-  passed : [],
-  logPassed : function(passed, data){
-    if (passed){
+  failed: [],
+  passed: [],
+  logJobResult: function (passed, data) {
+    if (passed) {
       this.passed.push(data);
     } else {
       this.failed.push(data);
@@ -32,35 +32,37 @@ logger = {
     readline.cursorTo(process.stdout, 0)
     process.stdout.write(`| failed: ${this.failed.length} | passed: ${this.passed.length} | total: ${pdfFiles.length} |`);
   },
-  logFailed : function(){
+  logFailed: function () {
     console.log('\nFAILED ITEMS:');
-    for (const fail of this.failed){
+    for (const fail of this.failed) {
       console.log(fail);
     }
   },
-  showPassed : function(){
+  logPassed: function () {
     console.log('\nPASSED ITEMS:');
-    for (const pass of this.passed){
+    for (const pass of this.passed) {
       console.log(pass);
-    } 
+    }
   }
 }
 
-async function cleanup(){
-  for (let worker of workers){
+async function cleanup() {
+  for (let worker of workers) {
     await worker.terminate();
   }
   await scheduler.terminate();
-  try{await fs.unlinkSync('./pol.traineddata')}catch(e){};
+  try {
+    await fs.unlinkSync('./pol.traineddata')
+  } catch (e) { };
   logger.logFailed();
-  logger.showPassed();
+  logger.logPassed();
 }
 
-async function initScheduler(){
+async function initScheduler() {
   scheduler = await Tesseract.createScheduler();
   let workerJobs = [];
-  for (let i = 0; i < workersAmount; i++){
-    workerJobs.push(async function(){
+  for (let i = 0; i < workersAmount; i++) {
+    workerJobs.push(async function () {
       let worker = await Tesseract.createWorker();
       await worker.load();
       await worker.loadLanguage('pol');
@@ -69,27 +71,29 @@ async function initScheduler(){
       workers.push(worker);
     })
   }
-
   console.log(`adding ${workerJobs.length} workers...`);
-  try{await fs.unlinkSync('./pol.traineddata')}catch(e){};
+  try {
+    await fs.unlinkSync('./pol.traineddata')
+  } catch (e) { };
   await async.parallel(workerJobs);
 }
 
-async function fetchDir(){
+async function fetchDir() {
   let filesNamesInDir = await fs.readdirSync(filesPath).filter(function (e) {
     return path.extname(e).toLowerCase() === '.pdf';
   });
   pdfFiles = [];
-  for (let fileName of filesNamesInDir){
+  for (let fileName of filesNamesInDir) {
     pdfFiles.push(filesPath + fileName);
   }
 }
 
-async function scrapPdfContent(fileName){
+async function scrapPdfContent(fileName) {
   let pdf = await pdfjsLib.getDocument(fileName).promise;
   let page = await pdf.getPage(1);
-  let viewport = page.getViewport({ scale: zoom });
-
+  let viewport = page.getViewport({
+    scale: zoom
+  });
   viewport.transform = [zoom, 0, 0, -zoom, -viewport.width / 2.5, viewport.height];
   let canvasFactory = new NodeCanvasFactory();
   let canvasAndContext = canvasFactory.create(
@@ -104,24 +108,26 @@ async function scrapPdfContent(fileName){
 
   await page.render(renderContext).promise;
   let image = canvasAndContext.canvas.toBuffer();
-
-  const { data: { text } } = await scheduler.addJob('recognize', image);
-
-  const contrNumFromFilename = fileName.match(filenameContrNumRgx) ? fileName.match(filenameContrNumRgx)[0] : 'unable to read';
-  const contrNumFromFile =  text.match(pdfContrNumRgx) ? text.match(pdfContrNumRgx)[0] : 'unable to read';
-  if (contrNumFromFilename == contrNumFromFile){
-    logger.logPassed(true, 'contract match for: ' + fileName + ' :: (filename|file) ' + contrNumFromFilename + '|' + contrNumFromFile);
+  const {
+    data: {
+      text
+    }
+  } = await scheduler.addJob('recognize', image);
+  const contrNumFromFilename = fileName.match(filenameContrNumRgx) ? fileName.match(filenameContrNumRgx)[0] : 'no regex match';
+  const contrNumFromFile = text.match(pdfContrNumRgx) ? text.match(pdfContrNumRgx)[0] : 'no regex match';
+  if (contrNumFromFilename == contrNumFromFile) {
+    logger.logJobResult(true, `contract match for: ${fileName} (filename|file) ${contrNumFromFilename}|${contrNumFromFile}`);
   } else {
-    logger.logPassed(false, 'contract numbers do not match for: ' + fileName + ' :: (filename|file) ' + contrNumFromFilename + '|' + contrNumFromFile);
+    logger.logJobResult(false, `contract numbers do not match for: ${fileName} (filename|file) ${contrNumFromFilename}|${contrNumFromFile}`);
   }
 }
 
-function NodeCanvasFactory() {}
+function NodeCanvasFactory() { }
 NodeCanvasFactory.prototype = {
   create: function NodeCanvasFactory_create(width, height) {
-    assert(width > 0 && height > 0, "Invalid canvas size");
+    assert(width > 0 && height > 0, 'Invalid canvas size');
     let canvas = Canvas.createCanvas(width, height);
-    let context = canvas.getContext("2d");
+    let context = canvas.getContext('2d');
     return {
       canvas: canvas,
       context: context,
@@ -129,14 +135,14 @@ NodeCanvasFactory.prototype = {
   },
 
   reset: function NodeCanvasFactory_reset(canvasAndContext, width, height) {
-    assert(canvasAndContext.canvas, "Canvas is not specified");
-    assert(width > 0 && height > 0, "Invalid canvas size");
+    assert(canvasAndContext.canvas, 'Canvas is not specified');
+    assert(width > 0 && height > 0, 'Invalid canvas size');
     canvasAndContext.canvas.width = width;
     canvasAndContext.canvas.height = height;
   },
 
   destroy: function NodeCanvasFactory_destroy(canvasAndContext) {
-    assert(canvasAndContext.canvas, "Canvas is not specified");
+    assert(canvasAndContext.canvas, 'Canvas is not specified');
     canvasAndContext.canvas.width = 0;
     canvasAndContext.canvas.height = 0;
     canvasAndContext.canvas = null;
@@ -144,12 +150,12 @@ NodeCanvasFactory.prototype = {
   },
 };
 
-async function analyzeFiles(){
+async function analyzeFiles() {
   await fetchDir();
   await initScheduler();
   let anaylyzeJobs = [];
-  for (let fileName of pdfFiles){
-    anaylyzeJobs.push(async function(){
+  for (let fileName of pdfFiles) {
+    anaylyzeJobs.push(async function () {
       await scrapPdfContent(fileName);
     })
   }
