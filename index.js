@@ -4,10 +4,65 @@ const Canvas = require("canvas");
 const assert = require("assert").strict;
 const fs = require("fs");
 const path = require('path');
+const async = require('async');
+const readline = require('readline');
 
 const filesPath = './pdf-files/';
 const zoom = 3;
+const workersAmount = 10;
+
 let pdfFiles;
+let scheduler;
+let workers = [];
+
+logger = {
+  failed : [],
+  passed : [],
+  logPassed : function(passed, data){
+    if (passed){
+      this.passed.push(data);
+    } else {
+      this.failed.push(data);
+    }
+    readline.clearLine(process.stdout, 0)
+    readline.cursorTo(process.stdout, 0)
+    process.stdout.write(`passed: ${this.passed.length}, failed: ${this.failed.length} out of ${pdfFiles.length}`);
+  },
+  logFailed : function(){
+    console.log('\n');
+    for (const fail of this.failed){
+      console.log(fail);
+    }
+  }
+}
+
+async function cleanup(){
+  for (let worker of workers){
+    await worker.terminate();
+  }
+  await scheduler.terminate();
+  try{await fs.unlinkSync('./pol.traineddata')}catch(e){};
+  logger.logFailed();
+}
+
+async function initScheduler(){
+  scheduler = await Tesseract.createScheduler();
+  let workerJobs = [];
+  for (let i = 0; i < workersAmount; i++){
+    workerJobs.push(async function(){
+      let worker = await Tesseract.createWorker();
+      await worker.load();
+      await worker.loadLanguage('pol');
+      await worker.initialize('pol');
+      await scheduler.addWorker(worker);
+      workers.push(worker);
+    })
+  }
+
+  console.log('adding workers...');
+  try{await fs.unlinkSync('./pol.traineddata')}catch(e){};
+  await async.parallel(workerJobs);
+}
 
 async function fetchDir(){
   let filesNamesInDir = await fs.readdirSync(filesPath).filter(function (e) {
@@ -15,40 +70,39 @@ async function fetchDir(){
   });
   pdfFiles = [];
   for (let fileName of filesNamesInDir){
-    console.log(fileName);
     pdfFiles.push(filesPath + fileName);
   }
 }
 
-function scrapPdfContent(fileName){
-  pdfjsLib.getDocument(fileName).then(function(pdf){
-    pdf.getPage(1).then(function(page){
-      let viewport = page.getViewport({ scale: zoom });
-        viewport.transform = [zoom, 0, 0, -zoom, -viewport.width / 2.5, viewport.height];
-        let canvasFactory = new NodeCanvasFactory();
-        let canvasAndContext = canvasFactory.create(
-          viewport.width / 2,
-          viewport.height / 5,
-        );
-      let renderContext = {
-        canvasContext: canvasAndContext.context,
-        viewport: viewport,
-        canvasFactory: canvasFactory,
-      };
-      let renderTask = page.render(renderContext);
-      renderTask.promise.then(function(){
-        let image = canvasAndContext.canvas.toBuffer();
-        Tesseract.recognize(image, 'pol', 
-        { logger: m => console.log(m),
-          rectangles: [{ top: 0.1, left: 0.1, width: 0.1, height: 0.1 }] }
-        ).then(({ data: { text } }) => {
-          console.log(text);
-          })
-        fs.writeFile(fileName + '.png', image, function(error){
-        })
-      })
-    });
-  })
+async function scrapPdfContent(fileName){
+  let pdf = await pdfjsLib.getDocument(fileName).promise;
+  let page = await pdf.getPage(1);
+  let viewport = page.getViewport({ scale: zoom });
+
+  viewport.transform = [zoom, 0, 0, -zoom, -viewport.width / 2.5, viewport.height];
+  let canvasFactory = new NodeCanvasFactory();
+  let canvasAndContext = canvasFactory.create(
+    viewport.width / 2,
+    viewport.height / 5,
+  );
+  let renderContext = {
+    canvasContext: canvasAndContext.context,
+    viewport: viewport,
+    canvasFactory: canvasFactory,
+  };
+
+  await page.render(renderContext).promise;
+  let image = canvasAndContext.canvas.toBuffer();
+
+  const { data: { text } } = await scheduler.addJob('recognize', image);
+
+  const contractNumberFilename = fileName.match(/[0-9][^_]*/g) ? fileName.match(/[0-9][^_]*/g)[0] : 'unable to read';
+  const contractNumberPdf =  text.match(/(?<=wy:\s).*/gm) ? text.match(/(?<=wy:\s).*/gm)[0] : 'unable to read';
+  if (contractNumberFilename == contractNumberPdf){
+    logger.logPassed(true, 'contract match for: ' + fileName + ' :: ' + contractNumberFilename + '|' + contractNumberPdf);
+  } else {
+    logger.logPassed(false, 'contract numbers do not match for: ' + fileName + ' :: ' + contractNumberFilename + '|' + contractNumberPdf);
+  }
 }
 
 function NodeCanvasFactory() {}
@@ -81,9 +135,15 @@ NodeCanvasFactory.prototype = {
 
 async function analyzeFiles(){
   await fetchDir();
+  await initScheduler();
+  let anaylyzeJobs = [];
   for (let fileName of pdfFiles){
-    scrapPdfContent(fileName);
+    anaylyzeJobs.push(async function(){
+      await scrapPdfContent(fileName);
+    })
   }
+  await async.parallel(anaylyzeJobs);
+  await cleanup();
 }
 
 analyzeFiles();
