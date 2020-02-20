@@ -1,7 +1,7 @@
-//----------kontrolki:----------//
+//----------settings:-----------//
 const filesPath = './pdf-files/';
-const zoom = 3;
-const workersAmount = 2;
+const pdfZoomLvl = 3; //determines document OCR scan resolution, higher is better but takes longer to scan 
+const workersAmount = 2; //10-15 is probably max for default node heap of ~1.7gb, alloc can be manually ovd using node flag --max-old-space-size
 const pdfContrNumRgx = /(?<=wy:\s)[0-9]*/gm;
 const filenameContrNumRgx = /[0-9][^.]*/g;
 //------------------------------//
@@ -92,9 +92,9 @@ async function scrapPdfContent(fileName) {
   let pdf = await pdfjsLib.getDocument(fileName).promise;
   let page = await pdf.getPage(1);
   let viewport = page.getViewport({
-    scale: zoom
+    scale: pdfZoomLvl
   });
-  viewport.transform = [zoom, 0, 0, -zoom, -viewport.width / 2.5, viewport.height];
+  viewport.transform = [pdfZoomLvl, 0, 0, -pdfZoomLvl, -viewport.width / 2.5, viewport.height];
   let canvasFactory = new NodeCanvasFactory();
   let canvasAndContext = canvasFactory.create(
     viewport.width / 2,
@@ -108,11 +108,7 @@ async function scrapPdfContent(fileName) {
 
   await page.render(renderContext).promise;
   let image = canvasAndContext.canvas.toBuffer();
-  const {
-    data: {
-      text
-    }
-  } = await scheduler.addJob('recognize', image);
+  const {data: {text}} = await scheduler.addJob('recognize', image);
   const contrNumFromFilename = fileName.match(filenameContrNumRgx) ? fileName.match(filenameContrNumRgx)[0] : 'no regex match';
   const contrNumFromFile = text.match(pdfContrNumRgx) ? text.match(pdfContrNumRgx)[0] : 'no regex match';
   if (contrNumFromFilename == contrNumFromFile) {
