@@ -20,35 +20,32 @@ async function fetchDir(){
   }
 }
 
-function scrapPdfContent(fileName){
-  pdfjsLib.getDocument(fileName).then(function(pdf){
-    pdf.getPage(1).then(function(page){
-      let viewport = page.getViewport({ scale: zoom });
-        viewport.transform = [zoom, 0, 0, -zoom, -viewport.width / 2.5, viewport.height];
-        let canvasFactory = new NodeCanvasFactory();
-        let canvasAndContext = canvasFactory.create(
-          viewport.width / 2,
-          viewport.height / 5,
-        );
-      let renderContext = {
-        canvasContext: canvasAndContext.context,
-        viewport: viewport,
-        canvasFactory: canvasFactory,
-      };
-      let renderTask = page.render(renderContext);
-      renderTask.promise.then(function(){
-        let image = canvasAndContext.canvas.toBuffer();
-        Tesseract.recognize(image, 'pol', 
-        { logger: m => console.log(m),
-          rectangles: [{ top: 0.1, left: 0.1, width: 0.1, height: 0.1 }] }
-        ).then(({ data: { text } }) => {
-          console.log(text);
-          })
-        fs.writeFile(fileName + '.png', image, function(error){
-        })
-      })
-    });
-  })
+async function scrapPdfContent(fileName){
+  let pdf = await pdfjsLib.getDocument(fileName);
+  let page = await pdf.getPage(1);
+  let viewport = page.getViewport({ scale: zoom });
+
+  viewport.transform = [zoom, 0, 0, -zoom, -viewport.width / 2.5, viewport.height];
+  let canvasFactory = new NodeCanvasFactory();
+  let canvasAndContext = canvasFactory.create(
+    viewport.width / 2,
+    viewport.height / 5,
+  );
+  let renderContext = {
+    canvasContext: canvasAndContext.context,
+    viewport: viewport,
+    canvasFactory: canvasFactory,
+  };
+
+  const scheduler = await Tesseract.createScheduler();
+  const worker = await Tesseract.createWorker();
+  await scheduler.addWorker(worker);
+
+  await page.render(renderContext);
+  let image = canvasAndContext.canvas.toBuffer();
+
+  const { data: { text } } = await scheduler.addJob('recognize', image);
+  console.log(text);
 }
 
 function NodeCanvasFactory() {}
@@ -82,7 +79,7 @@ NodeCanvasFactory.prototype = {
 async function analyzeFiles(){
   await fetchDir();
   for (let fileName of pdfFiles){
-    scrapPdfContent(fileName);
+    await scrapPdfContent(fileName);
   }
 }
 
