@@ -9,6 +9,7 @@
   "author": "Dawid Dobrowolski",
   "license": "MIT",
   "dependencies": {
+    "async": "^3.1.1",
     "canvas": "^2.6.1",
     "pdfjs-dist": "^2.2.228",
     "tesseract.js": "^2.0.2"
