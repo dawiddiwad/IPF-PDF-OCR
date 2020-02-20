@@ -1,3 +1,11 @@
+//----------kontrolki:----------//
+const filesPath = './pdf-files/';
+const zoom = 3;
+const workersAmount = 2;
+const pdfContrNumRgx = /(?<=wy:\s)[0-9]*/gm;
+const filenameContrNumRgx = /[0-9][^.]*/g;
+//------------------------------//
+
 const pdfjsLib = require('pdfjs-dist');
 const Tesseract = require('tesseract.js');
 const Canvas = require("canvas");
@@ -6,10 +14,6 @@ const fs = require("fs");
 const path = require('path');
 const async = require('async');
 const readline = require('readline');
-
-const filesPath = './pdf-files/';
-const zoom = 3;
-const workersAmount = 10;
 
 let pdfFiles;
 let scheduler;
@@ -26,13 +30,19 @@ logger = {
     }
     readline.clearLine(process.stdout, 0)
     readline.cursorTo(process.stdout, 0)
-    process.stdout.write(`passed: ${this.passed.length}, failed: ${this.failed.length} out of ${pdfFiles.length}`);
+    process.stdout.write(`| failed: ${this.failed.length} | passed: ${this.passed.length} | total: ${pdfFiles.length} |`);
   },
   logFailed : function(){
-    console.log('\n');
+    console.log('\nFAILED ITEMS:');
     for (const fail of this.failed){
       console.log(fail);
     }
+  },
+  showPassed : function(){
+    console.log('\nPASSED ITEMS:');
+    for (const pass of this.passed){
+      console.log(pass);
+    } 
   }
 }
 
@@ -43,6 +53,7 @@ async function cleanup(){
   await scheduler.terminate();
   try{await fs.unlinkSync('./pol.traineddata')}catch(e){};
   logger.logFailed();
+  logger.showPassed();
 }
 
 async function initScheduler(){
@@ -59,7 +70,7 @@ async function initScheduler(){
     })
   }
 
-  console.log('adding workers...');
+  console.log(`adding ${workerJobs.length} workers...`);
   try{await fs.unlinkSync('./pol.traineddata')}catch(e){};
   await async.parallel(workerJobs);
 }
@@ -96,12 +107,12 @@ async function scrapPdfContent(fileName){
 
   const { data: { text } } = await scheduler.addJob('recognize', image);
 
-  const contractNumberFilename = fileName.match(/[0-9][^_]*/g) ? fileName.match(/[0-9][^_]*/g)[0] : 'unable to read';
-  const contractNumberPdf =  text.match(/(?<=wy:\s).*/gm) ? text.match(/(?<=wy:\s).*/gm)[0] : 'unable to read';
-  if (contractNumberFilename == contractNumberPdf){
-    logger.logPassed(true, 'contract match for: ' + fileName + ' :: ' + contractNumberFilename + '|' + contractNumberPdf);
+  const contrNumFromFilename = fileName.match(filenameContrNumRgx) ? fileName.match(filenameContrNumRgx)[0] : 'unable to read';
+  const contrNumFromFile =  text.match(pdfContrNumRgx) ? text.match(pdfContrNumRgx)[0] : 'unable to read';
+  if (contrNumFromFilename == contrNumFromFile){
+    logger.logPassed(true, 'contract match for: ' + fileName + ' :: (filename|file) ' + contrNumFromFilename + '|' + contrNumFromFile);
   } else {
-    logger.logPassed(false, 'contract numbers do not match for: ' + fileName + ' :: ' + contractNumberFilename + '|' + contractNumberPdf);
+    logger.logPassed(false, 'contract numbers do not match for: ' + fileName + ' :: (filename|file) ' + contrNumFromFilename + '|' + contrNumFromFile);
   }
 }
 
