@@ -4,10 +4,65 @@ const Canvas = require("canvas");
 const assert = require("assert").strict;
 const fs = require("fs");
 const path = require('path');
+const async = require('async');
+const readline = require('readline');
 
 const filesPath = './pdf-files/';
 const zoom = 3;
+const workersAmount = 10;
+
 let pdfFiles;
+let scheduler;
+let workers = [];
+
+logger = {
+  failed : [],
+  passed : [],
+  logPassed : function(passed, data){
+    if (passed){
+      this.passed.push(data);
+    } else {
+      this.failed.push(data);
+    }
+    readline.clearLine(process.stdout, 0)
+    readline.cursorTo(process.stdout, 0)
+    process.stdout.write(`passed: ${this.passed.length}, failed: ${this.failed.length} out of ${pdfFiles.length}`);
+  },
+  logFailed : function(){
+    console.log('\n');
+    for (const fail of this.failed){
+      console.log(fail);
+    }
+  }
+}
+
+async function cleanup(){
+  for (let worker of workers){
+    await worker.terminate();
+  }
+  await scheduler.terminate();
+  try{await fs.unlinkSync('./pol.traineddata')}catch(e){};
+  logger.logFailed();
+}
+
+async function initScheduler(){
+  scheduler = await Tesseract.createScheduler();
+  let workerJobs = [];
+  for (let i = 0; i < workersAmount; i++){
+    workerJobs.push(async function(){
+      let worker = await Tesseract.createWorker();
+      await worker.load();
+      await worker.loadLanguage('pol');
+      await worker.initialize('pol');
+      await scheduler.addWorker(worker);
+      workers.push(worker);
+    })
+  }
+
+  console.log('adding workers...');
+  try{await fs.unlinkSync('./pol.traineddata')}catch(e){};
+  await async.parallel(workerJobs);
+}
 
 async function fetchDir(){
   let filesNamesInDir = await fs.readdirSync(filesPath).filter(function (e) {
@@ -15,13 +70,12 @@ async function fetchDir(){
   });
   pdfFiles = [];
   for (let fileName of filesNamesInDir){
-    console.log(fileName);
     pdfFiles.push(filesPath + fileName);
   }
 }
 
 async function scrapPdfContent(fileName){
-  let pdf = await pdfjsLib.getDocument(fileName);
+  let pdf = await pdfjsLib.getDocument(fileName).promise;
   let page = await pdf.getPage(1);
   let viewport = page.getViewport({ scale: zoom });
 
@@ -37,15 +91,18 @@ async function scrapPdfContent(fileName){
     canvasFactory: canvasFactory,
   };
 
-  const scheduler = await Tesseract.createScheduler();
-  const worker = await Tesseract.createWorker();
-  await scheduler.addWorker(worker);
-
-  await page.render(renderContext);
+  await page.render(renderContext).promise;
   let image = canvasAndContext.canvas.toBuffer();
 
   const { data: { text } } = await scheduler.addJob('recognize', image);
-  console.log(text);
+
+  const contractNumberFilename = fileName.match(/[0-9][^_]*/g) ? fileName.match(/[0-9][^_]*/g)[0] : 'unable to read';
+  const contractNumberPdf =  text.match(/(?<=wy:\s).*/gm) ? text.match(/(?<=wy:\s).*/gm)[0] : 'unable to read';
+  if (contractNumberFilename == contractNumberPdf){
+    logger.logPassed(true, 'contract match for: ' + fileName + ' :: ' + contractNumberFilename + '|' + contractNumberPdf);
+  } else {
+    logger.logPassed(false, 'contract numbers do not match for: ' + fileName + ' :: ' + contractNumberFilename + '|' + contractNumberPdf);
+  }
 }
 
 function NodeCanvasFactory() {}
@@ -78,9 +135,15 @@ NodeCanvasFactory.prototype = {
 
 async function analyzeFiles(){
   await fetchDir();
+  await initScheduler();
+  let anaylyzeJobs = [];
   for (let fileName of pdfFiles){
-    await scrapPdfContent(fileName);
+    anaylyzeJobs.push(async function(){
+      await scrapPdfContent(fileName);
+    })
   }
+  await async.parallel(anaylyzeJobs);
+  await cleanup();
 }
 
 analyzeFiles();
